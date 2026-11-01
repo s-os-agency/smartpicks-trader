@@ -41,7 +41,7 @@ The dev server runs on port 8080.
 | `src/components/dashboard/` | Header, price display, market insights, and AI insights panels |
 | `UAE_E_Invoicing_Orchestration_Layer_Design.ipynb` | Standalone Colab notebook (Gemini) designing a UAE e-invoicing orchestration layer — separate from the trading dashboard |
 
-## Provenance
+## Source history
 
 Exported from Lovable. Live project:
 <https://lovable.dev/projects/f2fd55cb-f731-4c04-9872-9ca7a65be347>
