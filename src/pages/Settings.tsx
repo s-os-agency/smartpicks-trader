@@ -12,6 +12,8 @@ import notificationService from "@/services/notificationService";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { NetworkStatusAlert } from "@/components/NetworkStatusAlert";
 
+const MASKED_SECRET = "••••••••••••••••••••••••••••••••";
+
 const Settings = () => {
   const navigate = useNavigate();
   const [isLoading, setIsLoading] = useState(false);
@@ -23,6 +25,8 @@ const Settings = () => {
   
   const [apiKey, setApiKey] = useState("");
   const [secretKey, setSecretKey] = useState("");
+  const [hasVaultCredentials, setHasVaultCredentials] = useState(false);
+  const [storedApiKey, setStoredApiKey] = useState("");
   const [useProxyMode, setUseProxyMode] = useState(binanceService.getProxyMode());
   
   const [telegramEnabled, setTelegramEnabled] = useState(false);
@@ -37,8 +41,7 @@ const Settings = () => {
   const [isOfflineMode, setIsOfflineMode] = useState(false);
   
   useEffect(() => {
-    loadSavedSettings();
-    checkConnection();
+    void initializeSettings();
     
     setIsOfflineMode(binanceService.isInOfflineMode());
   }, []);
@@ -47,14 +50,26 @@ const Settings = () => {
     setStatusMessages(prev => [...prev, message]);
   };
   
-  const loadSavedSettings = () => {
-    const savedCredentials = localStorage.getItem('binanceCredentials');
-    if (savedCredentials) {
-      const credentials = JSON.parse(savedCredentials);
-      setApiKey(credentials.apiKey || "");
-      if (credentials.secretKey) {
-        setSecretKey("••••••••••••••••••••••••••••••••");
-      }
+  const initializeSettings = async () => {
+    await loadSavedSettings();
+    await checkConnection();
+  };
+  
+  const loadSavedSettings = async () => {
+    await binanceService.initializeCredentialsFromVault();
+
+    const existingApiKey = binanceService.getApiKey();
+    const hasCredentials = binanceService.hasCredentials();
+    if (hasCredentials) {
+      setApiKey(existingApiKey);
+      setStoredApiKey(existingApiKey);
+      setSecretKey(MASKED_SECRET);
+      setHasVaultCredentials(true);
+    } else {
+      setApiKey("");
+      setStoredApiKey("");
+      setSecretKey("");
+      setHasVaultCredentials(false);
     }
     
     setUseProxyMode(binanceService.getProxyMode());
@@ -321,17 +336,29 @@ const Settings = () => {
         return;
       }
       
-      // First save the credentials
-      const success = binanceService.saveCredentials({
-        apiKey,
-        secretKey: secretKey === "••••••••••••••••••••••••••••••••" 
-          ? JSON.parse(localStorage.getItem('binanceCredentials') || '{}').secretKey
-          : secretKey
+      const normalizedApiKey = apiKey.trim();
+      const isUsingMaskedSecret = secretKey === MASKED_SECRET;
+      const isApiKeyChanged = normalizedApiKey !== storedApiKey;
+      if (isUsingMaskedSecret && (isApiKeyChanged || !hasVaultCredentials)) {
+        toast.error("Enter your secret key to update the API key.");
+        addStatusMessage("❌ Secret key is required when API key changes.");
+        setConnectionStatus('error');
+        setConnectedMessage("Secret key is required when API key changes.");
+        setIsLoading(false);
+        return;
+      }
+
+      const saveResult = await binanceService.saveCredentials({
+        apiKey: normalizedApiKey,
+        secretKey: isUsingMaskedSecret ? "" : secretKey.trim()
       });
       
-      if (success) {
-        toast.success("API keys saved successfully");
-        addStatusMessage("✅ API keys saved successfully");
+      if (saveResult.success) {
+        toast.success("API keys saved to vault");
+        addStatusMessage("✅ API keys saved to vault");
+        setStoredApiKey(normalizedApiKey);
+        setHasVaultCredentials(true);
+        setSecretKey(MASKED_SECRET);
         
         // Now test connection with a slight delay to ensure credentials are fully saved
         setVerificationInProgress(true);
@@ -454,11 +481,20 @@ const Settings = () => {
             setVerificationInProgress(false);
           }
         }, 500); // Half-second delay to ensure credentials are saved
+      } else if (saveResult.checkpointRequired) {
+        setConnectionStatus('untested');
+        const checkpointMessage = saveResult.message || "Owner biometric/passkey approval is required in vault.";
+        setConnectedMessage(checkpointMessage);
+        addStatusMessage(`⚠️ ${checkpointMessage}`);
+        toast.warning(checkpointMessage);
+        setIsLoading(false);
+        setVerificationInProgress(false);
       } else {
-        addStatusMessage("❌ Failed to save API keys");
-        toast.error("Failed to save API keys");
+        const saveError = saveResult.message || "Failed to save API keys to vault";
+        addStatusMessage(`❌ ${saveError}`);
+        toast.error(saveError);
         setConnectionStatus('error');
-        setConnectedMessage("Failed to save API keys");
+        setConnectedMessage(saveError);
         setPortfolioVerified(false);
         setIsLoading(false);
         setVerificationInProgress(false);

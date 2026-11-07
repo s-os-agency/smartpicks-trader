@@ -33,6 +33,12 @@ npm run dev
 
 The dev server runs on port 8080.
 
+## Binance Vault Runtime Config
+
+- `VITE_BINANCE_VAULT_ENDPOINT`: HTTPS endpoint used by the app to load/save Binance API credentials in your approved vault/secret store.
+- Default if unset: `/api/v1/vault/binance/credentials`
+- Binance credentials are no longer read from browser `localStorage`.
+
 ## Layout
 
 | Path | Purpose |
