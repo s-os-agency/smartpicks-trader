@@ -1,4 +1,5 @@
 import { BinanceCredentials, ApiPermissions } from './types';
+import { VaultCredentialsStore, VaultSaveResult } from './vaultCredentialsStore';
 
 export class StorageManager {
   private static CREDENTIALS_KEY = 'binanceCredentials';
@@ -11,32 +12,46 @@ export class StorageManager {
   private static BYPASS_CONNECTION_CHECKS_KEY = 'bypassConnectionChecks';
   private static MAX_CONNECTION_RETRIES_KEY = 'maxConnectionRetries';
   private static FORCE_DIRECT_API_KEY = 'forceDirectApi';
+  private static inMemoryCredentials: BinanceCredentials | null = null;
   
   public static loadCredentials(): BinanceCredentials | null {
-    const savedCredentials = localStorage.getItem(this.CREDENTIALS_KEY);
-    if (savedCredentials) {
-      try {
-        const credentials = JSON.parse(savedCredentials);
-        console.log("Credentials loaded successfully:", credentials ? "API Key found" : "No API key");
-        return credentials;
-      } catch (error) {
-        console.error("Failed to parse credentials from localStorage:", error);
-        localStorage.removeItem(this.CREDENTIALS_KEY);
-        return null;
-      }
-    }
-    return null;
+    return this.inMemoryCredentials;
   }
   
-  public static saveCredentials(credentials: BinanceCredentials): boolean {
+  public static async hydrateCredentialsFromVault(): Promise<BinanceCredentials | null> {
     try {
-      localStorage.setItem(this.CREDENTIALS_KEY, JSON.stringify(credentials));
-      console.log("Credentials saved successfully");
-      return true;
+      this.inMemoryCredentials = await VaultCredentialsStore.loadCredentials();
+      this.clearLegacyCredentialStorage();
+      console.log(
+        `Vault credential hydration complete: ${this.inMemoryCredentials ? 'credentials loaded' : 'no credentials found'}`
+      );
+      return this.inMemoryCredentials;
     } catch (error) {
-      console.error('Failed to save credentials:', error);
-      return false;
+      console.error('Failed to hydrate credentials from vault:', error);
+      this.inMemoryCredentials = null;
+      return null;
     }
+  }
+
+  public static async saveCredentials(credentials: BinanceCredentials): Promise<VaultSaveResult> {
+    const result = await VaultCredentialsStore.saveCredentials(credentials);
+    if (result.success) {
+      this.inMemoryCredentials = {
+        apiKey: credentials.apiKey?.trim() || '',
+        secretKey: credentials.secretKey?.trim() || ''
+      };
+      this.clearLegacyCredentialStorage();
+      console.log('Credentials saved to vault successfully');
+    }
+    return result;
+  }
+
+  public static getVaultReference(): string {
+    return VaultCredentialsStore.getVaultReference();
+  }
+
+  private static clearLegacyCredentialStorage(): void {
+    localStorage.removeItem(this.CREDENTIALS_KEY);
   }
   
   public static loadApiPermissions(): ApiPermissions {

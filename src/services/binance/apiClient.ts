@@ -57,6 +57,10 @@ export class BinanceApiClient {
     return this.credentials?.apiKey || '';
   }
 
+  public getCredentialsSnapshot(): BinanceCredentials | null {
+    return this.credentials ? { ...this.credentials } : null;
+  }
+
   public async generateSignature(queryString: string): Promise<string> {
     if (!this.credentials || !this.credentials.secretKey) {
       throw new Error('API secret key not configured');

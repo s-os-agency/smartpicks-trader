@@ -2,7 +2,7 @@
 import { BinanceApiClient } from './apiClient';
 import { StorageManager } from './storageManager';
 import { BinanceCredentials } from './types';
-import { toast } from 'sonner';
+import { VaultSaveResult } from './vaultCredentialsStore';
 
 export class CredentialsService {
   private apiClient: BinanceApiClient;
@@ -110,27 +110,46 @@ export class CredentialsService {
     return this.apiClient.getApiKey();
   }
   
-  public saveCredentials(credentials: BinanceCredentials): boolean {
+  public async initializeCredentialsFromVault(): Promise<boolean> {
+    const credentials = await StorageManager.hydrateCredentialsFromVault();
+    this.apiClient.setCredentials(credentials);
+    return !!credentials;
+  }
+
+  public getVaultReference(): string {
+    return StorageManager.getVaultReference();
+  }
+
+  public async saveCredentials(credentials: BinanceCredentials): Promise<VaultSaveResult> {
     try {
+      const existingCredentials = this.apiClient.getCredentialsSnapshot();
+      const nextSecretKey = credentials.secretKey?.trim() || existingCredentials?.secretKey || '';
+
       // Trim whitespace from credentials to prevent common errors
       const trimmedCredentials = {
         apiKey: credentials.apiKey?.trim() || '',
-        secretKey: credentials.secretKey?.trim() || ''
+        secretKey: nextSecretKey
       };
       
       this.apiClient.setCredentials(trimmedCredentials);
-      const success = StorageManager.saveCredentials(trimmedCredentials);
+      const result = await StorageManager.saveCredentials(trimmedCredentials);
       
-      if (success) {
+      if (result.success) {
         window.dispatchEvent(new CustomEvent('binance-credentials-updated'));
         // Reset connection retry count when credentials change
         this.connectionRetryCount = 0;
+      } else {
+        this.apiClient.setCredentials(await StorageManager.hydrateCredentialsFromVault());
       }
       
-      return success;
+      return result;
     } catch (error) {
       console.error('Failed to save credentials:', error);
-      return false;
+      return {
+        success: false,
+        checkpointRequired: false,
+        message: error instanceof Error ? error.message : 'Failed to save credentials.'
+      };
     }
   }
   

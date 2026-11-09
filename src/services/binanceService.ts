@@ -17,6 +17,7 @@ import {
   AccountInfoResponse
 } from './binance/types';
 import { toast } from 'sonner';
+import { VaultSaveResult } from './binance/vaultCredentialsStore';
 
 class BinanceService {
   private apiClient: BinanceApiClient;
@@ -28,6 +29,7 @@ class BinanceService {
   private tradingService: TradingService;
   private credentialsService: CredentialsService;
   private connectionStatusManager: ConnectionStatusManager;
+  private credentialsReady: Promise<void>;
   
   constructor() {
     const credentials = StorageManager.loadCredentials();
@@ -42,6 +44,7 @@ class BinanceService {
     this.balanceService = new BalanceService(this.apiClient, this.logManager);
     this.tradingService = new TradingService(this.apiClient, this.logManager);
     this.credentialsService = new CredentialsService(this.apiClient);
+    this.credentialsReady = this.credentialsService.initializeCredentialsFromVault().then(() => undefined);
     
     const permissions = StorageManager.loadApiPermissions();
     this.accountService.setApiPermissions(permissions.read, permissions.trading);
@@ -70,24 +73,47 @@ class BinanceService {
     return this.credentialsService.hasCredentials();
   }
 
-  public saveCredentials(credentials: BinanceCredentials): boolean {
+  public getVaultReference(): string {
+    return this.credentialsService.getVaultReference();
+  }
+
+  public async initializeCredentialsFromVault(): Promise<boolean> {
+    const loaded = await this.credentialsService.initializeCredentialsFromVault();
+    this.credentialsReady = Promise.resolve();
+    return loaded;
+  }
+
+  private async ensureCredentialsReady(): Promise<void> {
+    await this.credentialsReady;
+  }
+
+  public async saveCredentials(credentials: BinanceCredentials): Promise<VaultSaveResult> {
     try {
-      const success = this.credentialsService.saveCredentials(credentials);
+      const result = await this.credentialsService.saveCredentials(credentials);
       
       this.accountService.setConnectionStatus('unknown');
       this.accountService.setLastConnectionError(null);
       this.balanceService.resetCache(); // Clear cache when credentials change
       
-      // After saving credentials, immediately test the connection
-      this.logManager.addTradingLog("API credentials updated, testing connection...", 'info');
+      if (result.success) {
+        // After saving credentials, immediately test the connection
+        this.logManager.addTradingLog("API credentials updated, testing connection...", 'info');
+        this.scheduleConnectionTest();
+      } else if (result.checkpointRequired) {
+        this.logManager.addTradingLog("Vault checkpoint is waiting for owner approval.", 'warning');
+      } else {
+        this.logManager.addTradingLog(result.message || "Failed to save credentials to vault.", 'error');
+      }
       
-      this.scheduleConnectionTest();
-      
-      return success;
+      return result;
     } catch (error) {
       console.error('Failed to save credentials:', error);
       this.logManager.addTradingLog(`Failed to save credentials: ${error instanceof Error ? error.message : String(error)}`, 'error');
-      return false;
+      return {
+        success: false,
+        checkpointRequired: false,
+        message: error instanceof Error ? error.message : 'Failed to save credentials.'
+      };
     }
   }
   
@@ -172,6 +198,7 @@ class BinanceService {
   }
 
   public async testConnection(): Promise<boolean> {
+    await this.ensureCredentialsReady();
     try {
       // First check for network connectivity by testing connectivity to a major site
       try {
@@ -263,6 +290,7 @@ class BinanceService {
   }
 
   public async getAccountInfo(): Promise<AccountInfoResponse> {
+    await this.ensureCredentialsReady();
     try {
       if (this.accountService.getConnectionStatus() === 'unknown' && this.hasCredentials()) {
         await this.testConnection();
@@ -283,6 +311,7 @@ class BinanceService {
   }
 
   public async getAccountBalance(forceRefresh: boolean = false): Promise<Record<string, BalanceInfo>> {
+    await this.ensureCredentialsReady();
     try {
       if (this.accountService.getConnectionStatus() === 'unknown' && this.hasCredentials()) {
         await this.testConnection();
@@ -349,6 +378,7 @@ class BinanceService {
     side: 'BUY' | 'SELL',
     quantity: string
   ): Promise<any> {
+    await this.ensureCredentialsReady();
     const result = await this.tradingService.placeMarketOrder(symbol, side, quantity);
     this.balanceService.resetCache();
     return result;
